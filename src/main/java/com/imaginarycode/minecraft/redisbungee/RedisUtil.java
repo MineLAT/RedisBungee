@@ -37,22 +37,22 @@ public class RedisUtil {
         }
     }
 
-    public static void cleanUpPlayer(String player, Jedis rsc) {
-        rsc.srem("proxy:" + RedisBungee.getApi().getServerId() + ":usersOnline", player);
-        rsc.hdel("player:" + player, "server", "ip", "proxy");
+    public static void cleanUpPlayer(String player, Jedis jedis) {
+        jedis.srem("proxy:" + RedisBungee.getApi().getServerId() + ":usersOnline", player);
+        jedis.hdel("player:" + player, "server", "ip", "proxy");
         long timestamp = System.currentTimeMillis();
-        rsc.hset("player:" + player, "online", String.valueOf(timestamp));
-        rsc.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
+        jedis.hset("player:" + player, "online", String.valueOf(timestamp));
+        jedis.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
                 UUID.fromString(player), DataManager.DataManagerMessage.Action.LEAVE,
                 new DataManager.LogoutPayload(timestamp))));
     }
 
-    public static void cleanUpPlayer(String player, Pipeline rsc) {
-        rsc.srem("proxy:" + RedisBungee.getApi().getServerId() + ":usersOnline", player);
-        rsc.hdel("player:" + player, "server", "ip", "proxy");
+    public static void cleanUpPlayer(String player, Pipeline pipeline) {
+        pipeline.srem("proxy:" + RedisBungee.getApi().getServerId() + ":usersOnline", player);
+        pipeline.hdel("player:" + player, "server", "ip", "proxy");
         long timestamp = System.currentTimeMillis();
-        rsc.hset("player:" + player, "online", String.valueOf(timestamp));
-        rsc.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
+        pipeline.hset("player:" + player, "online", String.valueOf(timestamp));
+        pipeline.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
                 UUID.fromString(player), DataManager.DataManagerMessage.Action.LEAVE,
                 new DataManager.LogoutPayload(timestamp))));
     }

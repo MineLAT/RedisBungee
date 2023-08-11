@@ -8,7 +8,6 @@ import redis.clients.jedis.JedisPool;
 
 import java.net.InetAddress;
 import java.util.List;
-import java.util.UUID;
 
 public class RedisBungeeConfiguration {
     @Getter
@@ -23,6 +22,7 @@ public class RedisBungeeConfiguration {
 
     public RedisBungeeConfiguration(JedisPool pool, Configuration configuration, String randomUUID) {
         this.pool = pool;
+
         if (configuration.getBoolean("use-random-id-string", false)) {
             this.serverId = configuration.getString("server-id") + "-" + randomUUID;
         } else {
