@@ -1,9 +1,10 @@
-name: ${project.name}
+name: RedisBungee
 main: com.imaginarycode.minecraft.redisbungee.RedisBungee
-version: ${project.version}
-author: Chunkr and Govindas limework
+version: ${version}
+author: Chunkr, Govindas limework and Rubenicos
 authors:
   - chunkr
   - Govindas Limework
+  - Rubenicos
 # This is used so that we can automatically override default BungeeCord behavior.
 softDepends: ["cmd_find", "cmd_list"]
