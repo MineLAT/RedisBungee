@@ -576,65 +576,115 @@ public final class RedisBungee extends Plugin {
 
     @NoArgsConstructor(access = AccessLevel.PRIVATE)
     class PubSubListener implements Runnable {
-        private JedisPubSubHandler jpsh;
+        private JedisPubSubHandler jpsh = new JedisPubSubHandler();
 
         private Set<String> addedChannels = new HashSet<>();
 
+        private boolean enabled = false;
+        private Thread thread = null;
+
         @Override
         public void run() {
-            boolean broken = false;
-            try (Jedis rsc = pool.getResource()) {
-                try {
-                    jpsh = new JedisPubSubHandler();
-                    addedChannels.add("redisbungee-" + configuration.getServerId());
-                    addedChannels.add("redisbungee-allservers");
-                    addedChannels.add("redisbungee-data");
-                    rsc.subscribe(jpsh, addedChannels.toArray(new String[0]));
-                } catch (Exception e) {
-                    // FIXME: Extremely ugly hack
-                    // Attempt to unsubscribe this instance and try again.
-                    getLogger().log(Level.INFO, "PubSub error, attempting to recover.", e);
-                    try {
-                        jpsh.unsubscribe();
-                    } catch (Exception e1) {
-                        /* This may fail with
-                        - java.net.SocketException: Broken pipe
-                        - redis.clients.jedis.exceptions.JedisConnectionException: JedisPubSub was not subscribed to a Jedis instance
-                        */
+            if (enabled) {
+                poison();
+            }
+            addedChannels.add("redisbungee-" + configuration.getServerId());
+            addedChannels.add("redisbungee-allservers");
+            addedChannels.add("redisbungee-data");
+            enabled = true;
+            thread = new Thread(this::alive);
+            thread.start();
+        }
+
+        private void alive() {
+            boolean reconnected = false;
+            while (enabled && !Thread.interrupted() && pool != null && !pool.isClosed()) {
+                try (Jedis jedis = pool.getResource()) {
+                    if (reconnected) {
+                        RedisBungee.this.getLogger().info("Redis connection is alive again");
                     }
-                    broken = true;
+                    // Subscribe channels and lock the thread
+                    jedis.subscribe(jpsh, addedChannels.toArray(new String[0]));
+                } catch (Throwable t) {
+                    // Thread was unlocked due error
+                    if (enabled) {
+                        if (reconnected) {
+                            RedisBungee.this.getLogger().warning("Redis connection dropped, automatic reconnection in 8 seconds...\n" + t.getMessage());
+                        }
+                        try {
+                            jpsh.unsubscribe();
+                        } catch (Throwable ignored) { }
+
+                        // Make an instant subscribe if occurs any error on initialization
+                        if (!reconnected) {
+                            reconnected = true;
+                        } else {
+                            try {
+                                Thread.sleep(8000);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    } else {
+                        return;
+                    }
                 }
-            } catch (JedisConnectionException e) {
-                getLogger().log(Level.INFO, "PubSub error, attempting to recover in 5 secs.");
-                getProxy().getScheduler().schedule(RedisBungee.this, PubSubListener.this, 5, TimeUnit.SECONDS);
-            }
-
-            if (broken) {
-                run();
             }
         }
 
-        public void addChannel(String... channel) {
-            addedChannels.addAll(Arrays.asList(channel));
-            jpsh.subscribe(channel);
+        public void addChannel(String... channels) {
+            addedChannels.addAll(Arrays.asList(channels));
+            try {
+                jpsh.unsubscribe();
+            } catch (Throwable ignored) { }
+            if (thread != null) {
+                thread.interrupt();
+                thread.start();
+            }
         }
 
-        public void removeChannel(String... channel) {
-            addedChannels.removeAll(Arrays.asList(channel));
-            jpsh.unsubscribe(channel);
+        public void removeChannel(String... channels) {
+            addedChannels.removeAll(Arrays.asList(channels));
+            try {
+                jpsh.unsubscribe();
+            } catch (Throwable ignored) { }
+            if (thread != null) {
+                thread.interrupt();
+                thread.start();
+            }
         }
 
         public void poison() {
-            addedChannels.clear();
-            jpsh.unsubscribe();
+            addedChannels.remove("redisbungee-" + configuration.getServerId());
+            addedChannels.remove("redisbungee-allservers");
+            addedChannels.remove("redisbungee-data");
+            enabled = false;
+            try {
+                jpsh.unsubscribe();
+            } catch (Throwable ignored) { }
+            if (thread != null) {
+                thread.interrupt();
+                thread = null;
+            }
         }
     }
 
     private class JedisPubSubHandler extends JedisPubSub {
+
         @Override
         public void onMessage(final String channel, final String message) {
-            if (message.trim().length() == 0) return;
+            if (channel == null || message.trim().length() == 0) return;
             getProxy().getScheduler().runAsync(RedisBungee.this, () -> getProxy().getPluginManager().callEvent(new PubSubMessageEvent(channel, message)));
+        }
+
+        @Override
+        public void onSubscribe(String channel, int subscribedChannels) {
+            RedisBungee.this.getLogger().info("RedisBungee subscribed to channel '" + channel + "'");
+        }
+
+        @Override
+        public void onUnsubscribe(String channel, int subscribedChannels) {
+            RedisBungee.this.getLogger().info("RedisBungee unsubscribed from channel '" + channel + "'");
         }
     }
 }
