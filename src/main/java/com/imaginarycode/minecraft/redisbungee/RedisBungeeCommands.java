@@ -54,7 +54,7 @@ class RedisBungeeCommands {
                     final long before = System.currentTimeMillis();
                     plugin.onReload();
                     final long time = System.currentTimeMillis() - before;
-                    sender.sendMessage(new ComponentBuilder("RedisBungee reloaded [")).color(ChatColor.GREEN)
+                    sender.sendMessage(new ComponentBuilder("RedisBungee reloaded [").color(ChatColor.GREEN)
                             .append(time + " ms").color(ChatColor.WHITE)
                             .append("]").color(ChatColor.GREEN)
                             .create());
