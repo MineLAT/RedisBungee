@@ -38,11 +38,38 @@ class RedisBungeeCommands {
         return num == 1 ? num + " player is" : num + " players are";
     }
 
+    public static class RedisBungeeCommand extends Command {
+
+        private final RedisBungee plugin;
+
+        RedisBungeeCommand(RedisBungee plugin) {
+            super("redisbungee", "redisbungee.command.use", "rbungee");
+            this.plugin = plugin;
+        }
+
+        @Override
+        public void execute(CommandSender sender, String[] args) {
+            if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
+                plugin.getProxy().getScheduler().runAsync(plugin, () -> {
+                    final long before = System.currentTimeMillis();
+                    plugin.onReload();
+                    final long time = System.currentTimeMillis() - before;
+                    sender.sendMessage(new ComponentBuilder("RedisBungee reloaded [")).color(ChatColor.GREEN)
+                            .append(time + " ms").color(ChatColor.WHITE)
+                            .append("]").color(ChatColor.GREEN)
+                            .create());
+                });
+            } else {
+                sender.sendMessage(new ComponentBuilder("RedisBungee v" + plugin.getDescription().getVersion()).color(ChatColor.YELLOW).create());
+            }
+        }
+    }
+
     public static class GlistCommand extends Command {
         private final RedisBungee plugin;
 
         GlistCommand(RedisBungee plugin) {
-            super("glist", "bungeecord.command.list", "redisbungee", "rglist");
+            super("glist", "bungeecord.command.list", "rglist");
             this.plugin = plugin;
         }
 

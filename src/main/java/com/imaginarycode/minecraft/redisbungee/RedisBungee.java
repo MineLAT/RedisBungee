@@ -190,6 +190,7 @@ public final class RedisBungee extends Plugin {
         }
 
         // Register own commands
+        getProxy().getPluginManager().registerCommand(this, new RedisBungeeCommands.RedisBungeeCommand(this));
         getProxy().getPluginManager().registerCommand(this, new RedisBungeeCommands.SendToAll(this));
         getProxy().getPluginManager().registerCommand(this, new RedisBungeeCommands.ServerId(this));
         getProxy().getPluginManager().registerCommand(this, new RedisBungeeCommands.ServerIds());
@@ -280,10 +281,6 @@ public final class RedisBungee extends Plugin {
 
     @Override
     public void onDisable() {
-        if (pool == null) {
-            return;
-        }
-
         // Poison the PubSub listener
         psl.poison();
         // Cancel tasks
@@ -292,6 +289,13 @@ public final class RedisBungee extends Plugin {
         // Unregister listeners
         getProxy().getPluginManager().unregisterListeners(this);
 
+        onDisablePool();
+    }
+
+    private void onDisablePool() {
+        if (pool == null) {
+            return;
+        }
         // Remove current proxy from redis
         try (Jedis jedis = pool.getResource()) {
             jedis.hdel("heartbeats", configuration.getServerId());
@@ -300,10 +304,34 @@ public final class RedisBungee extends Plugin {
                 for (String member : players)
                     RedisUtil.cleanUpPlayer(member, jedis);
             }
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
 
         // Jedis pool: GOKU AAAAAAHHHHH!
-        pool.destroy();
+        try {
+            pool.destroy();
+            pool = null;
+        } catch (Throwable ignored) { }
+    }
+
+    public void onReload() {
+        // Poison the PubSub listener
+        psl.poison();
+        onDisablePool();
+
+        // Load plugin config and config objects
+        try {
+            loadConfig();
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to load/save config", e);
+        } catch (JedisConnectionException e) {
+            throw new RuntimeException("Unable to connect to your Redis server!", e);
+        }
+
+        if (pool != null) {
+            psl.run();
+        }
     }
 
     private void loadConfig() throws IOException, JedisConnectionException {
