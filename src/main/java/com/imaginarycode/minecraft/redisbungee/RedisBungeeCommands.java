@@ -50,6 +50,11 @@ class RedisBungeeCommands {
         @Override
         public void execute(CommandSender sender, String[] args) {
             if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
+                if (args.length > 1) {
+                    RedisBungee.PREFERENCE = args[1];
+                } else {
+                    RedisBungee.PREFERENCE = "none";
+                }
                 plugin.getProxy().getScheduler().runAsync(plugin, () -> {
                     final long before = System.currentTimeMillis();
                     plugin.onReload();

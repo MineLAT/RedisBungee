@@ -17,6 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import net.md_5.bungee.api.ProxyServer;
+import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.config.Configuration;
@@ -25,8 +26,13 @@ import net.md_5.bungee.config.YamlConfiguration;
 import redis.clients.jedis.*;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocketFactory;
 import java.io.*;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,6 +52,8 @@ import static com.google.common.base.Preconditions.checkArgument;
  *
  */
 public final class RedisBungee extends Plugin {
+
+    public static String PREFERENCE = null;
 
     // --- Static objects
     @Getter
@@ -311,7 +319,7 @@ public final class RedisBungee extends Plugin {
         // Jedis pool: GOKU AAAAAAHHHHH!
         try {
             pool.destroy();
-            pool = null;
+            //pool = null;
         } catch (Throwable ignored) { }
     }
 
@@ -334,6 +342,30 @@ public final class RedisBungee extends Plugin {
         }
     }
 
+    private String loadRedisServer(Configuration configuration) {
+        String redisServer = configuration.getString("redis-server", "localhost");
+        if (PREFERENCE != null) {
+            return configuration.getString("backup." + PREFERENCE + ".redis-server", redisServer);
+        }
+        return redisServer;
+    }
+
+    private int loadRedisPort(Configuration configuration) {
+        int redisPort = configuration.getInt("redis-port", 6379);
+        if (PREFERENCE != null) {
+            return configuration.getInt("backup." + PREFERENCE + ".redis-port", redisPort);
+        }
+        return redisPort;
+    }
+
+    private String loadRedisPassword(Configuration configuration) {
+        String redisPassword = configuration.getString("redis-password");
+        if (PREFERENCE != null) {
+            return configuration.getString("backup." + PREFERENCE + ".redis-password", redisPassword);
+        }
+        return redisPassword;
+    }
+
     private void loadConfig() throws IOException, JedisConnectionException {
         if (!getDataFolder().exists()) {
             getDataFolder().mkdirs();
@@ -352,11 +384,46 @@ public final class RedisBungee extends Plugin {
         // Load config
         final Configuration configuration = ConfigurationProvider.getProvider(YamlConfiguration.class).load(file);
 
-        final String redisServer = configuration.getString("redis-server", "localhost");
-        final int redisPort = configuration.getInt("redis-port", 6379);
+        if (PREFERENCE == null) {
+            final String preference = configuration.getString("preference");
+            if (preference != null && !preference.equalsIgnoreCase("none")) {
+                PREFERENCE = preference;
+            }
+        } else if (PREFERENCE.equalsIgnoreCase("none")) {
+            PREFERENCE = null;
+        }
+
+        final Configuration servers;
+        if (PREFERENCE != null) {
+            servers = configuration.getSection("backup." + PREFERENCE + ".server");
+        } else if (configuration.contains("server")) {
+            servers = configuration.getSection("server");
+        } else {
+            servers = null;
+        }
+        if (servers != null) {
+            for (String key : servers.getKeys()) {
+                final String address = servers.getString(key);
+                if (address != null) {
+                    final ServerInfo info = getProxy().getServerInfo(key);
+                    if (info != null) {
+                        try {
+                            final String[] split = address.split(":", 2);
+                            ServerInfo newInfo = ProxyServer.getInstance().constructServerInfo(info.getName(), InetSocketAddress.createUnresolved(split[0], Integer.parseInt(split[1])), info.getMotd(), info.isRestricted());
+                            ProxyServer.getInstance().getServers().put(key, newInfo);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }
+        }
+
+        final String redisServer = loadRedisServer(configuration);
+        final int redisPort = loadRedisPort(configuration);
         final boolean useSSL = configuration.getBoolean("useSSL");
 
-        String redisPassword = configuration.getString("redis-password");
+        String redisPassword = loadRedisPassword(configuration);
         if (redisPassword != null && (redisPassword.isEmpty() || redisPassword.equals("none"))) {
             redisPassword = null;
         }
@@ -387,17 +454,33 @@ public final class RedisBungee extends Plugin {
 
         // Create JedisPool using configuration
         final String finalRedisPassword = redisPassword;
-        FutureTask<JedisPool> task = new FutureTask<>(() -> {
-            // Create the pool...
-            JedisPoolConfig config = new JedisPoolConfig();
-            config.setMaxTotal(configuration.getInt("max-redis-connections", 8));
-            return new JedisPool(config, redisServer, redisPort, 0, finalRedisPassword, useSSL);
-        });
+        FutureTask<JedisPool> task;
+        if (pool == null) {
+            task = new FutureTask<>(() -> {
+                // Create the pool...
+                JedisPoolConfig config = new JedisPoolConfig();
+                config.setMaxTotal(configuration.getInt("max-redis-connections", 8));
+                return new JedisPool(config, redisServer, redisPort, 0, finalRedisPassword, useSSL);
+            });
+        } else {
+            task = new FutureTask<>(() -> {
+                // Reload the pool...
+                JedisPoolConfig config = new JedisPoolConfig();
+                config.setMaxTotal(configuration.getInt("max-redis-connections", 8));
+                final JedisFactory factory = getFactory().newInstance(redisServer, redisPort, 0, 0, finalRedisPassword, 0, null, useSSL, null, null, null);
+                pool.initPool(config, factory);
+                return pool;
+            });
+        }
 
         getProxy().getScheduler().runAsync(this, task);
 
         try {
-            pool = task.get();
+            if (pool == null) {
+                pool = task.get();
+            } else {
+                task.get();
+            }
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException("Unable to create Redis pool", e);
         }
@@ -427,7 +510,7 @@ public final class RedisBungee extends Plugin {
             getLogger().log(Level.INFO, "Successfully connected to Redis.");
         } catch (JedisConnectionException e) {
             pool.destroy();
-            pool = null;
+            //pool = null;
             throw e;
         }
 
@@ -449,6 +532,24 @@ public final class RedisBungee extends Plugin {
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException("Unable to create HTTP client", e);
         }
+    }
+
+    private static Constructor<JedisFactory> getFactory() throws NoSuchMethodException {
+        final Constructor<JedisFactory> constructor = JedisFactory.class.getDeclaredConstructor(
+                String.class,
+                int.class,
+                int.class,
+                int.class,
+                String.class,
+                int.class,
+                String.class,
+                boolean.class,
+                SSLSocketFactory.class,
+                SSLParameters.class,
+                HostnameVerifier.class
+        );
+        constructor.setAccessible(true);
+        return constructor;
     }
 
     Multimap<String, UUID> serversToPlayers() {
@@ -667,6 +768,7 @@ public final class RedisBungee extends Plugin {
             } catch (Throwable ignored) { }
             if (thread != null) {
                 thread.interrupt();
+                thread = new Thread(this::alive);
                 thread.start();
             }
         }
@@ -678,6 +780,7 @@ public final class RedisBungee extends Plugin {
             } catch (Throwable ignored) { }
             if (thread != null) {
                 thread.interrupt();
+                thread = new Thread(this::alive);
                 thread.start();
             }
         }
